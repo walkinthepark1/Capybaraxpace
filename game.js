@@ -175,65 +175,267 @@
   }
 
   // ---------------------------------------------------------------- audio
+  // Everything is synthesized live with Web Audio: no sound files.
+  // Chain: voices -> [stereo pan] -> sfx/music bus -> master -> compressor -> speakers,
+  // with a filtered "space echo" send for the big moments.
   const Snd = {
-    ac: null, master: null, noiseBuf: null, lastShot: 0, musicTimer: null, step: 0, nextTime: 0,
+    ac: null, master: null, sfx: null, music: null, echoIn: null, noiseBuf: null, curve: null,
+    last: {}, boomLog: [], beam: null, musicTimer: null, step: 0, nextTime: 0,
     init() {
       if (this.ac) { if (this.ac.state === 'suspended') this.ac.resume(); return; }
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
-      this.ac = new AC();
-      this.master = this.ac.createGain();
-      this.master.gain.value = opts.sound ? 0.4 : 0;
-      this.master.connect(this.ac.destination);
-      const len = this.ac.sampleRate;
-      this.noiseBuf = this.ac.createBuffer(1, len, this.ac.sampleRate);
-      const d = this.noiseBuf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      const ac = this.ac = new AC();
+      this.master = ac.createGain();
+      this.master.gain.value = opts.sound ? 0.6 : 0;
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 6;
+      comp.attack.value = 0.003; comp.release.value = 0.25;
+      this.master.connect(comp); comp.connect(ac.destination);
+      this.sfx = ac.createGain(); this.sfx.connect(this.master);
+      this.music = ac.createGain(); this.music.gain.value = 0.65; this.music.connect(this.master);
+      // space echo
+      const d = ac.createDelay(1), fb = ac.createGain(), lp = ac.createBiquadFilter();
+      d.delayTime.value = 0.19; fb.gain.value = 0.33; lp.type = 'lowpass'; lp.frequency.value = 2200;
+      this.echoIn = ac.createGain();
+      this.echoIn.connect(d); d.connect(lp); lp.connect(fb); fb.connect(d); lp.connect(this.sfx);
+      // 2s of white noise, reused by every noise voice
+      const len = ac.sampleRate * 2;
+      this.noiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+      const nd = this.noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) nd[i] = Math.random() * 2 - 1;
+      // soft-clip curve for crunchy distortion
+      this.curve = new Float32Array(1024);
+      for (let i = 0; i < 1024; i++) this.curve[i] = Math.tanh((i / 1023 * 2 - 1) * 4);
     },
-    setOn(on) { if (this.master) this.master.gain.value = on ? 0.4 : 0; },
-    tone(freq, dur, type = 'square', vol = 0.2, slide = 0, when = 0) {
-      if (!this.ac || !opts.sound) return;
-      const t = this.ac.currentTime + when;
-      const o = this.ac.createOscillator(), g = this.ac.createGain();
-      o.type = type;
-      o.frequency.setValueAtTime(freq, t);
-      if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, slide), t + dur);
-      g.gain.setValueAtTime(vol, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g); g.connect(this.master);
-      o.start(t); o.stop(t + dur + 0.02);
+    setOn(on) { if (this.master) this.master.gain.value = on ? 0.6 : 0; if (!on) this.beamOff(true); },
+    // true if sound may play now; with a key, also rate-limits that sound to one per `gap` seconds
+    ok(key, gap) {
+      if (!this.ac || !opts.sound) return false;
+      if (key) {
+        const now = this.ac.currentTime;
+        if (now - (this.last[key] || 0) < gap) return false;
+        this.last[key] = now;
+      }
+      return true;
     },
-    noise(dur, vol = 0.3, freq = 1200, when = 0) {
-      if (!this.ac || !opts.sound) return;
-      const t = this.ac.currentTime + when;
-      const s = this.ac.createBufferSource(), f = this.ac.createBiquadFilter(), g = this.ac.createGain();
+    panX(x) { return x === undefined || !W ? 0 : clamp((x / W) * 2 - 1, -1, 1) * 0.7; },
+    out(node, pan, echo, bus) {
+      let n = node;
+      if (pan && this.ac.createStereoPanner) {
+        const p = this.ac.createStereoPanner();
+        p.pan.value = clamp(pan, -1, 1);
+        n.connect(p); n = p;
+      }
+      n.connect(bus || this.sfx);
+      if (echo) { const s = this.ac.createGain(); s.gain.value = echo; n.connect(s); s.connect(this.echoIn); }
+    },
+    env(g, t, vol, attack, dur) {
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + attack);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(dur, attack + 0.01));
+    },
+    shape(n) { const ws = this.ac.createWaveShaper(); ws.curve = this.curve; n.connect(ws); return ws; },
+    // pitched voice: {type, freq, to, slide, dur, vol, attack, when, pan, echo, dist, detune, bus}
+    voice(o) {
+      const ac = this.ac, t = ac.currentTime + (o.when || 0), dur = o.dur;
+      const osc = ac.createOscillator();
+      osc.type = o.type || 'sine';
+      osc.frequency.setValueAtTime(o.freq, t);
+      if (o.to) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.to), t + (o.slide || dur));
+      if (o.detune) osc.detune.value = o.detune;
+      const n = o.dist ? this.shape(osc) : osc;
+      const g = ac.createGain();
+      this.env(g, t, o.vol || 0.1, o.attack || 0.004, dur);
+      n.connect(g);
+      this.out(g, o.pan, o.echo, o.bus);
+      osc.start(t); osc.stop(t + dur + 0.05);
+    },
+    // filtered noise voice: {type, f0, f1, q, dur, vol, attack, when, pan, echo, dist, bus}
+    hiss(o) {
+      const ac = this.ac, t = ac.currentTime + (o.when || 0), dur = o.dur;
+      const s = ac.createBufferSource();
       s.buffer = this.noiseBuf;
-      f.type = 'lowpass';
-      f.frequency.setValueAtTime(freq, t);
-      f.frequency.exponentialRampToValueAtTime(80, t + dur);
-      g.gain.setValueAtTime(vol, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      s.connect(f); f.connect(g); g.connect(this.master);
-      s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.02);
+      const f = ac.createBiquadFilter();
+      f.type = o.type || 'lowpass';
+      f.Q.value = o.q || 1;
+      f.frequency.setValueAtTime(o.f0 || 2000, t);
+      if (o.f1) f.frequency.exponentialRampToValueAtTime(o.f1, t + dur);
+      s.connect(f);
+      const n = o.dist ? this.shape(f) : f;
+      const g = ac.createGain();
+      this.env(g, t, o.vol || 0.2, o.attack || 0.003, dur);
+      n.connect(g);
+      this.out(g, o.pan, o.echo, o.bus);
+      s.start(t, Math.random() * 1.5); s.stop(t + dur + 0.05);
     },
-    shoot(kind) {
-      if (!this.ac) return;
+
+    // ---- weapons
+    shoot(kind, x) {
+      const pan = this.panX(x);
+      if (kind === 'spread') {
+        if (!this.ok('shot', 0.09)) return;
+        this.voice({ type: 'sawtooth', freq: 1400, to: 180, dur: 0.14, vol: 0.05, pan });
+        this.voice({ type: 'sawtooth', freq: 1420, to: 190, dur: 0.14, vol: 0.04, pan, detune: 15 });
+        this.hiss({ type: 'bandpass', f0: 5000, f1: 800, q: 3, dur: 0.08, vol: 0.05, pan });
+      } else if (kind === 'rapid') {
+        if (!this.ok('shot', 0.055)) return;
+        this.voice({ type: 'triangle', freq: rand(2200, 2600), to: 700, dur: 0.06, vol: 0.07, pan });
+        this.hiss({ type: 'highpass', f0: 6000, dur: 0.02, vol: 0.03, pan });
+      } else {
+        if (!this.ok('shot', 0.08)) return;
+        const f = rand(1500, 1800);                         // classic "pew", slightly varied
+        this.voice({ type: 'square', freq: f, to: f * 0.18, dur: 0.11, vol: 0.045, pan });
+        this.voice({ type: 'sine', freq: f / 2, to: f * 0.1, dur: 0.11, vol: 0.06, pan });
+      }
+    },
+    // Mega Laser: one sustained, wobbling beam sound while it's held on
+    beamOn(x) {
+      if (!this.ok()) return;
+      const ac = this.ac;
+      if (!this.beam) {
+        const t = ac.currentTime;
+        const g = ac.createGain();
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.14, t + 0.08);
+        const f = ac.createBiquadFilter();
+        f.type = 'lowpass'; f.frequency.value = 1400; f.Q.value = 8;
+        const lfo = ac.createOscillator(), lg = ac.createGain();
+        lfo.frequency.value = 9; lg.gain.value = 700;
+        lfo.connect(lg); lg.connect(f.frequency);
+        const mk = (type, freq) => { const o = ac.createOscillator(); o.type = type; o.frequency.value = freq; o.connect(f); return o; };
+        const o1 = mk('sawtooth', 110), o2 = mk('sawtooth', 111.4), o3 = mk('square', 55);
+        const whine = ac.createOscillator(), wg = ac.createGain(), vib = ac.createOscillator(), vg = ac.createGain();
+        whine.frequency.value = 1760; wg.gain.value = 0.18;
+        vib.frequency.value = 6; vg.gain.value = 30;
+        vib.connect(vg); vg.connect(whine.frequency);
+        whine.connect(wg); wg.connect(g);
+        f.connect(g);
+        let pan = null, n = g;
+        if (ac.createStereoPanner) { pan = ac.createStereoPanner(); g.connect(pan); n = pan; }
+        n.connect(this.sfx);
+        const send = ac.createGain(); send.gain.value = 0.2; n.connect(send); send.connect(this.echoIn);
+        const nodes = [o1, o2, o3, lfo, whine, vib];
+        nodes.forEach((o) => o.start(t));
+        this.beam = { g, pan, nodes };
+        this.voice({ type: 'sawtooth', freq: 200, to: 2400, dur: 0.25, vol: 0.08, echo: 0.3 }); // charge-up zap
+      }
+      if (this.beam.pan) this.beam.pan.pan.setTargetAtTime(this.panX(x), ac.currentTime, 0.05);
+    },
+    beamOff(silent) {
+      if (!this.beam || !this.ac) return;
+      const t = this.ac.currentTime, b = this.beam;
+      this.beam = null;
+      b.g.gain.cancelScheduledValues(t);
+      b.g.gain.setValueAtTime(Math.max(0.0001, b.g.gain.value), t);
+      b.g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+      b.nodes.forEach((o) => o.stop(t + 0.2));
+      if (!silent && this.ok()) this.voice({ type: 'sawtooth', freq: 900, to: 60, dur: 0.3, vol: 0.05 }); // power-down
+    },
+    sizzle(x) {
+      if (!this.ok('sizzle', 0.07)) return;
+      this.hiss({ type: 'highpass', f0: rand(4000, 8000), dur: 0.06, vol: 0.06, pan: this.panX(x) });
+      this.voice({ type: 'square', freq: rand(80, 140), dur: 0.05, vol: 0.03 });
+    },
+    missile(x) {
+      if (!this.ok('missile', 0.06)) return;
+      const pan = this.panX(x);
+      this.hiss({ type: 'bandpass', f0: 500, f1: 4000, q: 2, dur: 0.35, vol: 0.12, attack: 0.05, pan });
+      this.voice({ type: 'sawtooth', freq: 140, to: 700, dur: 0.3, vol: 0.05, pan });
+    },
+    missileBoom(x) {
+      this.boom(2, x);
+      if (this.ok('mping', 0.05)) this.voice({ type: 'triangle', freq: 880, to: 440, dur: 0.2, vol: 0.06, pan: this.panX(x), echo: 0.4 });
+    },
+
+    // ---- explosions: sub thump + rumbling body + crunch + flying-debris crackles
+    boom(size, x) {
+      if (!this.ok()) return;
       const now = this.ac.currentTime;
-      if (now - this.lastShot < 0.07) return;
-      this.lastShot = now;
-      if (kind === 'spread') this.tone(900, 0.08, 'sawtooth', 0.05, 300);
-      else if (kind === 'rapid') this.tone(1400, 0.05, 'square', 0.035, 700);
-      else this.tone(1100, 0.07, 'square', 0.045, 450);
+      this.boomLog = this.boomLog.filter((t) => now - t < 0.15);
+      if (this.boomLog.length >= 4 && size < 3) return;     // voice limit so chain reactions don't clip
+      this.boomLog.push(now);
+      const pan = this.panX(x), k = size / 3, p = rand(0.85, 1.15);
+      this.voice({ type: 'sine', freq: 160 * p, to: 32, dur: 0.25 + k * 0.6, vol: 0.18 + k * 0.42, pan });
+      this.hiss({ type: 'lowpass', f0: (2500 + k * 2500) * p, f1: 90, dur: 0.3 + k * 0.9, vol: 0.14 + k * 0.38, pan, echo: k * 0.5, dist: size >= 3 });
+      this.hiss({ type: 'bandpass', f0: 1200 * p, f1: 300, q: 0.8, dur: 0.15 + k * 0.2, vol: 0.15, pan });
+      if (size >= 2) {
+        for (let i = 0; i < size * 2; i++) {
+          this.hiss({ type: 'highpass', f0: rand(3000, 7000), dur: rand(0.02, 0.05), vol: rand(0.04, 0.09), when: rand(0.05, 0.35), pan: pan + rand(-0.3, 0.3) });
+        }
+      }
     },
-    missile() { this.tone(200, 0.3, 'sawtooth', 0.08, 900); this.noise(0.25, 0.08, 3000); },
-    boom(big) { this.noise(big ? 0.9 : 0.4, big ? 0.6 : 0.3, big ? 1500 : 2500); this.tone(big ? 90 : 140, big ? 0.6 : 0.25, 'sine', 0.3, 30); },
-    hit() { this.tone(160, 0.3, 'sawtooth', 0.25, 50); this.noise(0.2, 0.3, 900); },
-    shieldHit() { this.tone(600, 0.25, 'triangle', 0.2, 1500); },
-    pickup() { [660, 880, 1320].forEach((f, i) => this.tone(f, 0.12, 'triangle', 0.18, 0, i * 0.06)); },
-    power() { [440, 660, 880, 1320, 1760].forEach((f, i) => this.tone(f, 0.14, 'square', 0.1, 0, i * 0.05)); },
-    level() { [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => this.tone(f, 0.18, 'square', 0.1, 0, i * 0.08)); },
-    nova() { this.noise(1.4, 0.7, 4000); this.tone(1200, 1.2, 'sawtooth', 0.15, 40); },
-    over() { [392, 330, 262, 196].forEach((f, i) => this.tone(f, 0.35, 'triangle', 0.22, 0, i * 0.18)); },
+    nova() {
+      if (!this.ok()) return;
+      // reverse swell...
+      this.hiss({ type: 'lowpass', f0: 300, f1: 8000, dur: 0.35, attack: 0.3, vol: 0.25 });
+      this.voice({ type: 'sawtooth', freq: 60, to: 1200, dur: 0.35, attack: 0.3, vol: 0.06 });
+      // ...then the biggest bang in the game
+      this.voice({ type: 'sine', freq: 120, to: 25, dur: 1.6, vol: 0.5, when: 0.35 });
+      this.hiss({ type: 'lowpass', f0: 6000, f1: 60, dur: 1.8, vol: 0.5, when: 0.35, dist: true, echo: 0.6 });
+      this.voice({ type: 'sawtooth', freq: 1500, to: 40, dur: 1.2, vol: 0.08, when: 0.35, echo: 0.5 });
+    },
+
+    // ---- the capybara
+    squeak(when = 0) {
+      if (!this.ok()) return;
+      this.voice({ type: 'sine', freq: 1100, to: 1900, slide: 0.06, dur: 0.14, vol: 0.12, when });
+      this.voice({ type: 'sine', freq: 1900, to: 900, dur: 0.12, vol: 0.1, when: when + 0.07 });
+    },
+    hit() {
+      if (!this.ok()) return;
+      this.voice({ type: 'square', freq: 240, to: 50, dur: 0.35, vol: 0.18, dist: true });
+      this.hiss({ type: 'lowpass', f0: 1800, f1: 100, dur: 0.3, vol: 0.3 });
+      this.squeak(0.05);
+    },
+    shieldHit() {
+      if (!this.ok()) return;
+      this.voice({ type: 'triangle', freq: 700, to: 1800, dur: 0.3, vol: 0.08, echo: 0.5 });
+      this.voice({ type: 'sine', freq: 2400, to: 3200, dur: 0.2, vol: 0.05, echo: 0.5 });
+      this.hiss({ type: 'highpass', f0: 5000, dur: 0.12, vol: 0.06 });
+    },
+    over() {
+      if (!this.ok()) return;                               // sad trombone "womp womp womp"
+      [[392, 370, 0.3], [349, 330, 0.3], [311, 233, 0.8]].forEach(([a, b, d], i) =>
+        this.voice({ type: 'triangle', freq: a, to: b, dur: d, vol: 0.14, when: 0.5 + i * 0.34, echo: 0.2 }));
+    },
+
+    // ---- rewards
+    pickup() {
+      if (!this.ok()) return;
+      [880, 1109, 1319, 1760].forEach((f, i) => this.voice({ type: 'triangle', freq: f, dur: 0.14, vol: 0.12, when: i * 0.045, echo: 0.3 }));
+      this.hiss({ type: 'highpass', f0: 8000, dur: 0.25, vol: 0.03, attack: 0.05 });
+    },
+    power() {
+      if (!this.ok()) return;
+      this.voice({ type: 'sawtooth', freq: 150, to: 1500, dur: 0.4, vol: 0.07, echo: 0.3 });
+      [523, 659, 784, 1047].forEach((f) => this.voice({ type: 'square', freq: f, dur: 0.35, vol: 0.03, when: 0.3 }));
+      this.squeak(0.45);
+    },
+    combo(n) {
+      if (!this.ok('combo', 0.05)) return;                  // pitch climbs with the multiplier
+      const f = 440 * Math.pow(2, (n * 2) / 12);
+      this.voice({ type: 'square', freq: f, dur: 0.07, vol: 0.035 });
+      this.voice({ type: 'square', freq: f * 1.5, dur: 0.07, vol: 0.03, when: 0.05 });
+    },
+    whoosh(fromLeft) {
+      if (!this.ok('whoosh', 0.3)) return;                  // comet fly-by
+      this.hiss({ type: 'bandpass', f0: 300, f1: 2500, q: 3, dur: 0.9, attack: 0.35, vol: 0.14, pan: fromLeft ? -0.8 : 0.8, echo: 0.3 });
+    },
+    level() {
+      if (!this.ok()) return;
+      [523, 659, 784, 1047, 1319].forEach((f, i) => this.voice({ type: 'square', freq: f, dur: 0.2, vol: 0.05, when: i * 0.08, echo: 0.3 }));
+      [1047, 1319, 1568].forEach((f) => this.voice({ type: 'sawtooth', freq: f, dur: 0.7, vol: 0.035, when: 0.42, echo: 0.4 }));
+      this.hiss({ type: 'bandpass', f0: 200, f1: 6000, q: 1.5, dur: 1.4, attack: 0.6, vol: 0.12 }); // warp
+    },
+
+    // music helpers (routed to the music bus)
+    tone(freq, dur, type, vol, slide = 0, when = 0) {
+      this.voice({ type, freq, to: slide || undefined, dur, vol, when, bus: this.music });
+    },
+    noise(dur, vol, freq, when = 0) {
+      this.hiss({ type: 'lowpass', f0: freq, f1: 80, dur, vol, when, bus: this.music });
+    },
 
     // tiny lookahead sequencer for driving synthwave-ish music
     startMusic() {
@@ -363,6 +565,7 @@
       vx: (fromLeft ? 1 : -1) * rand(0.35, 0.55) * W, vy: rand(0.35, 0.5) * H,
       rot: 0, vr: 0, hp: 1, hitT: 0, color: pick(['#3dfcff', '#ff8a3d', '#7dff6a']),
     });
+    Snd.whoosh(fromLeft);
   }
 
   function spawnPickup(type, x, y) {
@@ -413,7 +616,7 @@
       kind: 'missile', x: player.x + side * player.r * 0.8, y: player.y, vx: side * 120 * U, vy: -200 * U,
       r: 6 * U, dmg: 5, life: 3, target: null, color: '#ff4d6d', pod: fromPod,
     });
-    Snd.missile();
+    Snd.missile(player.x);
   }
 
   function fireWeapon(dt) {
@@ -423,19 +626,19 @@
     const bspd = -H * 1.3;
     if (p.weapon === 'laser') {
       // continuous beam — damage applied in updateLaser
-      if (p.fireT <= 0) { p.fireT = 0.12; Snd.tone(220 + Math.random() * 40, 0.12, 'sawtooth', 0.03); }
+      // its sustained hum is driven from update() via Snd.beamOn/beamOff
     } else if (p.fireT <= 0) {
       const mk = (x, vx, color, dmg = 1, r = 4) => bullets.push({ kind: 'shot', x, y: p.y - p.r, vx, vy: bspd, r: r * U, dmg, life: 1.5, color });
       if (p.weapon === 'blaster') {
         p.fireT = 0.17;
         if (p.twin) { mk(p.x - 10 * U, 0, '#ffe14d'); mk(p.x + 10 * U, 0, '#ffe14d'); }
         else mk(p.x, 0, '#ffe14d');
-        Snd.shoot('blaster');
+        Snd.shoot('blaster', p.x);
       } else if (p.weapon === 'rapid') {
         p.fireT = 0.065;
         mk(p.x + rand(-6, 6) * U, rand(-30, 30) * U, '#ff8a3d');
         if (p.twin) mk(p.x + rand(-12, 12) * U, rand(-30, 30) * U, '#ffe14d');
-        Snd.shoot('rapid');
+        Snd.shoot('rapid', p.x);
       } else if (p.weapon === 'spread') {
         p.fireT = 0.2;
         const n = p.twin ? 7 : 5;
@@ -443,7 +646,7 @@
           const a = (i / (n - 1) - 0.5) * 0.8;
           bullets.push({ kind: 'shot', x: p.x, y: p.y - p.r, vx: Math.sin(a) * -bspd, vy: Math.cos(a) * bspd, r: 5 * U, dmg: 1, life: 1.5, color: i % 2 ? '#ff3df2' : '#8a5cff' });
         }
-        Snd.shoot('spread');
+        Snd.shoot('spread', p.x);
       }
     }
     // missiles (pickup ammo)
@@ -476,7 +679,7 @@
     rings.push({ x: r.x, y: r.y, r: r.r * 0.5, max: r.r * 2.4, life: 0.4, color: cols[0] });
     shake = Math.max(shake, 3 + r.size * 3);
     if (r.size >= 2) doFlash(cols[0], 0.12 + r.size * 0.04);
-    Snd.boom(r.size >= 3);
+    Snd.boom(r.kind === 'comet' ? 2 : r.size, r.x);
     if (r.kind === 'rock' && r.size > 1) {
       for (let i = 0; i < 2; i++) {
         spawnRock(r.size - 1, r.x + rand(-5, 5), r.y, r.vx + (i ? 1 : -1) * rand(40, 110) * U, r.vy * rand(0.8, 1.1));
@@ -486,6 +689,7 @@
     const base = r.kind === 'comet' ? 150 : r.kind === 'debris' ? 75 : [0, 60, 40, 25][r.size];
     game.combo = Math.min(8, game.combo + 0.25);
     game.comboT = 1.6;
+    if (Math.floor(game.combo) > 1) Snd.combo(Math.floor(game.combo));
     const pts = Math.round(base * Math.floor(game.combo));
     game.score += pts;
     addText(r.x, r.y, '+' + pts, Math.floor(game.combo) > 1 ? '#ffe14d' : '#fff', 14 + Math.floor(game.combo) * 2);
@@ -526,7 +730,8 @@
     rings.push({ x: p.x, y: p.y, r: 10, max: Math.max(W, H) * 0.6, life: 0.8, color: '#ff3df2' });
     shake = 30;
     doFlash('#ffffff', 0.9);
-    Snd.boom(true);
+    Snd.beamOff(true);
+    Snd.boom(4, p.x);
     Snd.over();
     buzz([80, 40, 160]);
     deathTimer = 1.6;
@@ -686,6 +891,7 @@
             // splash damage
             const R = 55 * U;
             burst(b.x, b.y, 16, ['#ff4d6d', '#ffe14d', '#fff'], 0.7);
+            Snd.missileBoom(b.x);
             rings.push({ x: b.x, y: b.y, r: 5, max: R, life: 0.3, color: '#ff8a3d' });
             for (const o of rocks) if (!o.dead && (o.x - b.x) ** 2 + (o.y - b.y) ** 2 < (R + o.r) ** 2) damageRock(o, o === r ? b.dmg : 2, b.x, b.y);
           } else {
@@ -703,12 +909,15 @@
       for (const r of rocks) {
         if (r.dead || r.y > p.y || r.y < -r.r) continue;
         if (Math.abs(r.x - p.x) < r.r + half) {
+          Snd.sizzle(r.x);
           r.laserAcc = (r.laserAcc || 0) + dt * 16;
           if (r.laserAcc >= 1) { const d = Math.floor(r.laserAcc); r.laserAcc -= d; damageRock(r, d, r.x, r.y + r.r * 0.6); }
           else r.hitT = 0.05;
         }
       }
     }
+
+    if (p.alive && p.laserOn) Snd.beamOn(p.x); else Snd.beamOff();
 
     // rocks
     for (const r of rocks) {
@@ -1158,6 +1367,7 @@
   function gameOver() {
     state = 'over';
     Snd.stopMusic();
+    Snd.beamOff(true);
     const s = game.score;
     const isBest = s > best;
     if (isBest) { best = s; store.set('best', best); }
@@ -1172,6 +1382,7 @@
     if (state !== 'play') return;
     state = 'pause';
     Snd.stopMusic();
+    Snd.beamOff(true);
     show(ui.pause, true);
     show(ui.pauseBtn, false);
   }
@@ -1188,6 +1399,7 @@
     state = 'menu';
     game = null;
     Snd.stopMusic();
+    Snd.beamOff(true);
     $('bestMenu').textContent = best.toLocaleString();
     show(ui.over, false); show(ui.pause, false); show(ui.pauseBtn, false); show(ui.menu, true);
   }
@@ -1203,7 +1415,11 @@
   const optSound = $('optSound'), optFlash = $('optFlash');
   optSound.checked = opts.sound;
   optFlash.checked = opts.reduceFlash;
-  optSound.addEventListener('change', () => { opts.sound = optSound.checked; store.set('sound', opts.sound); Snd.setOn(opts.sound); });
+  const optSound2 = $('optSound2');
+  optSound2.checked = opts.sound;
+  const setSound = (on) => { opts.sound = on; optSound.checked = optSound2.checked = on; store.set('sound', on); Snd.setOn(on); };
+  optSound.addEventListener('change', () => setSound(optSound.checked));
+  optSound2.addEventListener('change', () => setSound(optSound2.checked));
   optFlash.addEventListener('change', () => { opts.reduceFlash = optFlash.checked; store.set('reduceFlash', opts.reduceFlash); });
   if (!store.get('reduceFlash', null) && window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
     opts.reduceFlash = true; optFlash.checked = true;
@@ -1274,5 +1490,5 @@
   }
 
   // test hook (harmless in production)
-  window.__capyx = { get state() { return state; }, get game() { return game; }, get player() { return player; }, levelUp: () => levelUp(), hurt: (d) => hurtPlayer(d), spawnPickup: (t) => spawnPickup(t, player.x, player.y - 60) };
+  window.__capyx = { get state() { return state; }, get game() { return game; }, get player() { return player; }, levelUp: () => levelUp(), hurt: (d) => hurtPlayer(d), snd: Snd, spawnPickup: (t) => spawnPickup(t, player.x, player.y - 60) };
 })();
