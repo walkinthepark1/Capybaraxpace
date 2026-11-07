@@ -50,6 +50,19 @@ Chain kills to build a combo multiplier of up to x8.
 ## Gamertag & leaderboard
 Type a gamertag on the start screen, or tap 🎲 for a random one. No account or sign-up is needed. Your tag and a top-10 leaderboard are saved on your device.
 
+## Capy Closet
+Tap **👕 CUSTOMIZE CAPY** on the start screen to dress up your capybara. Your look is saved on your device.
+
+| Category | Gear (unlock level) |
+|---|---|
+| Outfits | Fur Only, 80s Tracksuit, Aloha Shirt, Disco Suit (3), Biker Jacket (5), Tuxedo (7) |
+| Shades | Aviators, Pixel Shades, Heart Specs (2), Star Specs (4), 3D Glasses (6) |
+| Bling | Gold Chain, Bow Tie, Bandana (2), Pearls (4), Flower Lei (6) |
+| Hair & Hats | Sweatband, Retro Cap (2), Afro (3), Neon Mohawk (5), Crown (8) |
+| Jetpack | Blue, Hot Pink, Lime, Stealth (4), Solid Gold (6), Rainbow (8) |
+
+Gear marked with a level unlocks the first time you reach that level in any run.
+
 ## Look out for...
 Every now and then a friendly spaceship cruises by. Its pilot is a capybara vibing to music on headphones under a clear glass dome, with LED lights changing colors inside the cockpit. It's just passing through, so don't shoot it.
 
