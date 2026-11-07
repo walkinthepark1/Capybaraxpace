@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0420">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Capybara Xpace — dodge asteroids, grab blasters and missiles, and keep a space capybara alive.">
+<title>Capybara Xpace</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game" aria-label="Capybara Xpace game"></canvas>
+<div id="safe" aria-hidden="true"></div>
+
+<button id="pauseBtn" class="icon-btn hidden" aria-label="Pause">II</button>
+
+<!-- Start screen -->
+<section id="menu" class="overlay">
+  <div class="panel">
+    <h1 class="title"><span>CAPYBARA</span><span class="x">XPACE</span></h1>
+    <p class="tag">Dodge the debris. Grab the guns. Survive the void.</p>
+    <button id="startBtn" class="big-btn">LAUNCH 🚀</button>
+    <p class="best">BEST: <b id="bestMenu">0</b></p>
+    <div class="how">
+      <div><i class="dot" style="--c:#ff3df2"></i>Drag anywhere to fly</div>
+      <div><i class="dot" style="--c:#ffe14d"></i>Your blaster fires on its own</div>
+      <div><i class="dot" style="--c:#3dfcff"></i>Grab crates for guns &amp; missiles</div>
+      <div><i class="dot" style="--c:#7dff6a"></i>Survive to unlock shields &amp; regen</div>
+    </div>
+    <div class="toggles">
+      <label><input type="checkbox" id="optSound" checked> Sound</label>
+      <label><input type="checkbox" id="optFlash"> Reduce flashing</label>
+    </div>
+  </div>
+</section>
+
+<!-- Pause -->
+<section id="pause" class="overlay hidden">
+  <div class="panel">
+    <h2 class="sub">PAUSED</h2>
+    <button id="resumeBtn" class="big-btn">RESUME</button>
+    <button id="quitBtn" class="small-btn">MAIN MENU</button>
+  </div>
+</section>
+
+<!-- Game over -->
+<section id="over" class="overlay hidden">
+  <div class="panel">
+    <h2 class="sub boom">CAPY DOWN!</h2>
+    <p class="score-line">SCORE <b id="finalScore">0</b></p>
+    <p class="score-line small">LEVEL <b id="finalLevel">1</b> · BEST <b id="bestOver">0</b></p>
+    <p id="newBest" class="new-best hidden">★ NEW BEST ★</p>
+    <button id="retryBtn" class="big-btn">FLY AGAIN</button>
+    <button id="menuBtn" class="small-btn">MAIN MENU</button>
+  </div>
+</section>
+
+<script src="game.js"></script>
+</body>
+</html>
