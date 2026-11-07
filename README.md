@@ -38,7 +38,20 @@ On a phone, use **Add to Home Screen** to play it fullscreen like an app. It als
 | 7 | Turbo regen |
 | 8+ | +20 max HP each level |
 
-Enemies get faster and more numerous as you go: asteroids that split apart, spinning satellite debris from level 2, and blazing comets from level 3. Chain kills to build a combo multiplier of up to x8.
+From level 2 on, every level is harder than the last:
+- Asteroids fall about 12% faster each level, and new ones arrive about 13% more often
+- Asteroids get tougher and hit harder, and more of them arrive in pairs and triples
+- Spinning satellite debris starts at level 2; from level 4 more and more of it is aimed straight at you
+- Blazing comets start at level 3
+- **Meteor showers** strike halfway through every level from level 3, longer and denser each time
+
+Chain kills to build a combo multiplier of up to x8.
+
+## Gamertag & leaderboard
+Type a gamertag on the start screen, or tap 🎲 for a random one. No account or sign-up is needed. Your tag and a top-10 leaderboard are saved on your device.
+
+## Look out for...
+Every now and then a friendly spaceship cruises by. Its pilot is a capybara vibing to music on headphones under a clear glass dome, with LED lights changing colors inside the cockpit. It's just passing through, so don't shoot it.
 
 There's a **Reduce flashing** toggle on the start screen. It turns on automatically if your device asks for reduced motion.
 

@@ -25,8 +25,17 @@
   <div class="panel">
     <h1 class="title"><span>CAPYBARA</span><span class="x">XPACE</span></h1>
     <p class="tag">Dodge the debris. Grab the guns. Survive the void.</p>
+    <div class="tag-box">
+      <label for="tagInput" class="tag-label">GAMERTAG</label>
+      <div class="tag-field">
+        <input id="tagInput" type="text" maxlength="12" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="done" placeholder="ENTER YOUR TAG">
+        <button id="diceBtn" class="dice" type="button" aria-label="Pick a random gamertag">🎲</button>
+      </div>
+      <p class="hint">No sign-up needed. Your tag is saved on this device.</p>
+    </div>
     <button id="startBtn" class="big-btn">LAUNCH 🚀</button>
     <p class="best">BEST: <b id="bestMenu">0</b></p>
+    <div id="boardMenu" class="board"></div>
     <div class="how">
       <div><i class="dot" style="--c:#ff3df2"></i>Drag anywhere to fly</div>
       <div><i class="dot" style="--c:#ffe14d"></i>Your blaster fires on its own</div>
@@ -54,9 +63,12 @@
 <section id="over" class="overlay hidden">
   <div class="panel">
     <h2 class="sub boom">CAPY DOWN!</h2>
+    <p class="pilot">PILOT <b id="overTag"></b></p>
     <p class="score-line">SCORE <b id="finalScore">0</b></p>
     <p class="score-line small">LEVEL <b id="finalLevel">1</b> · BEST <b id="bestOver">0</b></p>
     <p id="newBest" class="new-best hidden">★ NEW BEST ★</p>
+    <p id="rankLine" class="rank"></p>
+    <div id="boardOver" class="board"></div>
     <button id="retryBtn" class="big-btn">FLY AGAIN</button>
     <button id="menuBtn" class="small-btn">MAIN MENU</button>
   </div>
