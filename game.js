@@ -20,6 +20,27 @@
   const opts = { sound: store.get('sound', true), reduceFlash: store.get('reduceFlash', false) };
   let best = store.get('best', 0);
 
+  // Gamertags: no account, just a name saved on this device next to a local leaderboard.
+  const TAG_ADJ = ['COSMIC', 'TURBO', 'ASTRO', 'HYPER', 'LASER', 'ROCKET', 'STAR', 'COMET', 'NEON', 'MEGA', 'NOVA', 'ZOOM', 'CHILL', 'SPACE'];
+  const TAG_NOUN = ['CAPY', 'BARA', 'CHONK', 'PILOT', 'ACE', 'BEAN', 'NUGGET', 'POTATO', 'RIDER', 'BUN'];
+  const cleanTag = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 12);
+  function randomTag() {
+    for (;;) { const t = pick(TAG_ADJ) + pick(TAG_NOUN) + randi(1, 99); if (t.length <= 12) return t; }
+  }
+  let tag = cleanTag(store.get('tag', ''));
+  function loadBoard() {
+    const b = store.get('board', []);
+    return Array.isArray(b) ? b.filter((e) => e && typeof e.score === 'number').slice(0, 10) : [];
+  }
+  function addScore(entry) {      // returns the entry's rank index, or -1 if outside the top 10
+    const b = loadBoard();
+    b.push(entry);
+    b.sort((a, c) => c.score - a.score);
+    const top = b.slice(0, 10);
+    store.set('board', top);
+    return top.indexOf(entry);
+  }
+
   let W = 0, H = 0, DPR = 1, U = 1, safeTop = 0, safeBottom = 0;
 
   // ---------------------------------------------------------------- glow sprites
@@ -400,6 +421,11 @@
         this.voice({ type: 'triangle', freq: a, to: b, dur: d, vol: 0.14, when: 0.5 + i * 0.34, echo: 0.2 }));
     },
 
+    alarm() {
+      if (!this.ok('alarm', 1)) return;                     // two-tone warning siren
+      [0, 0.22, 0.44, 0.66].forEach((w, i) => this.voice({ type: 'square', freq: i % 2 ? 660 : 880, dur: 0.2, vol: 0.05, when: w, echo: 0.2 }));
+    },
+
     // ---- rewards
     pickup() {
       if (!this.ok()) return;
@@ -505,7 +531,7 @@
   function newGame() {
     game = {
       score: 0, level: 1, levelT: 0, spawnT: 0.5, pickupT: 6, combo: 1, comboT: 0,
-      warp: 1, warpT: 0, survivalAcc: 0,
+      warp: 1, warpT: 0, survivalAcc: 0, showerT: 0, showerSpawn: 0, showerDone: false,
     };
     player = {
       x: W / 2, y: H * 0.78, tx: W / 2, ty: H * 0.78, r: 22 * U, tilt: 0,
@@ -528,10 +554,10 @@
   }
 
   function spawnRock(size, x, y, vx, vy) {
-    const lv = game.level;
+    const d = game.level - 1;  // difficulty steps past level 1
     const sizes = { 3: 46, 2: 28, 1: 16 };
     const r = sizes[size] * U * rand(0.9, 1.1);
-    const speedMul = 1 + (lv - 1) * 0.08;
+    const speedMul = Math.min(2.6, 1 + d * 0.12 + Math.max(0, d - 5) * 0.05);
     const hue = pick([280, 320, 20, 190, 45, 260]);
     rocks.push({
       kind: 'rock', size, r,
@@ -540,7 +566,7 @@
       vx: vx !== undefined ? vx : rand(-0.06, 0.06) * W,
       vy: vy !== undefined ? vy : rand(0.13, 0.24) * H * speedMul * (size === 3 ? 0.8 : 1),
       rot: rand(0, TAU), vr: rand(-2, 2),
-      hp: [0, 1, 3, 7][size] + Math.floor((lv - 1) / 3) * size,
+      hp: [0, 1, 3, 7][size] + Math.floor(d / 2) * size,
       pts: makeShape(randi(8, 12), 0.35),
       craters: Array.from({ length: size + 1 }, () => [rand(-0.5, 0.5), rand(-0.5, 0.5), rand(0.12, 0.25)]),
       hue, hitT: 0,
@@ -548,11 +574,14 @@
   }
 
   function spawnDebris() {
-    const r = rand(14, 22) * U;
+    const d = game.level - 1, r = rand(14, 22) * U, x = rand(r, W - r);
+    const vy = rand(0.28, 0.38) * H * Math.min(2.4, 1 + d * 0.1);
+    let vx = rand(-0.1, 0.1) * W;
+    // from level 4, more and more debris is thrown straight at the capybara
+    if (d >= 3 && player && Math.random() < Math.min(0.7, 0.2 + d * 0.06)) vx = (player.x - x) / ((player.y + r) / vy);
     rocks.push({
-      kind: 'debris', size: 1, r, x: rand(r, W - r), y: -r,
-      vx: rand(-0.1, 0.1) * W, vy: rand(0.28, 0.38) * H * (1 + game.level * 0.05),
-      rot: rand(0, TAU), vr: rand(-6, 6), hp: 2, hitT: 0,
+      kind: 'debris', size: 1, r, x, y: -r, vx, vy,
+      rot: rand(0, TAU), vr: rand(-6, 6), hp: 2 + Math.floor(d / 3), hitT: 0,
       w: rand(1.2, 1.8), color: pick(['#c0c8ff', '#ffd0a0', '#a0ffe8']),
     });
   }
@@ -562,7 +591,7 @@
     rocks.push({
       kind: 'comet', size: 1, r,
       x: fromLeft ? -r : W + r, y: rand(-H * 0.1, H * 0.35),
-      vx: (fromLeft ? 1 : -1) * rand(0.35, 0.55) * W, vy: rand(0.35, 0.5) * H,
+      vx: (fromLeft ? 1 : -1) * rand(0.35, 0.55) * W * (1 + (game.level - 1) * 0.05), vy: rand(0.35, 0.5) * H * (1 + (game.level - 1) * 0.05),
       rot: 0, vr: 0, hp: 1, hitT: 0, color: pick(['#3dfcff', '#ff8a3d', '#7dff6a']),
     });
     Snd.whoosh(fromLeft);
@@ -767,6 +796,8 @@
     const g = game, p = player;
     g.level++;
     g.levelT = 0;
+    g.showerDone = false;
+    g.showerT = 0;
     g.warpT = 1.8;
     const lv = g.level;
     let unlock = UNLOCKS[lv];
@@ -796,6 +827,7 @@
     g.warpT = Math.max(0, g.warpT - dt);
     g.warp = 1 + (g.warpT > 0 ? Math.sin((g.warpT / 1.8) * Math.PI) * 5 : 0);
     updateBackground(dt, g.warp * (1 + g.level * 0.05));
+    updateShip(dt);
 
     if (p.alive) {
       // movement
@@ -844,13 +876,32 @@
       // spawning
       g.spawnT -= dt;
       if (g.spawnT <= 0) {
-        const lv = g.level;
-        g.spawnT = Math.max(0.22, 1.05 - lv * 0.08) * rand(0.6, 1.3);
+        const lv = g.level, d = lv - 1;
+        // spawn gap shrinks 13% every level: L1 1.0s, L2 0.87s, L4 0.66s, L6 0.50s, L10 0.29s
+        g.spawnT = Math.max(0.15, Math.pow(0.87, d)) * rand(0.6, 1.3);
         const roll = Math.random();
-        if (lv >= 3 && roll < 0.08) spawnComet();
-        else if (lv >= 2 && roll < 0.3) spawnDebris();
-        else spawnRock(Math.random() < 0.25 + lv * 0.04 ? 3 : Math.random() < 0.5 ? 2 : 1);
-        if (lv >= 5 && Math.random() < 0.15) spawnRock(1);
+        if (lv >= 3 && roll < Math.min(0.16, 0.06 + d * 0.012)) spawnComet();
+        else if (lv >= 2 && roll < Math.min(0.45, 0.24 + d * 0.025)) spawnDebris();
+        else spawnRock(Math.random() < Math.min(0.5, 0.25 + d * 0.04) ? 3 : Math.random() < 0.5 ? 2 : 1);
+        if (lv >= 3 && Math.random() < Math.min(0.5, d * 0.06)) spawnRock(Math.random() < 0.5 ? 2 : 1);
+        if (lv >= 6 && Math.random() < Math.min(0.35, (d - 4) * 0.05)) spawnDebris();
+      }
+      // meteor shower halfway through every level from 3 on, longer and denser each time
+      if (g.level >= 3 && !g.showerDone && g.levelT >= LEVEL_TIME * 0.45) {
+        g.showerDone = true;
+        g.showerT = Math.min(7, 3 + (g.level - 3) * 0.6);
+        showBanner('METEOR SHOWER!', 'INCOMING', '#ff4d6d');
+        doFlash('#ff4d6d', 0.3);
+        Snd.alarm();
+        buzz([40, 40, 40]);
+      }
+      if (g.showerT > 0) {
+        g.showerT -= dt;
+        g.showerSpawn -= dt;
+        if (g.showerSpawn <= 0) {
+          g.showerSpawn = Math.max(0.06, 0.16 - g.level * 0.008);
+          spawnRock(Math.random() < 0.8 ? 1 : 2, undefined, undefined, rand(-0.12, 0.12) * W, rand(0.35, 0.5) * H * Math.min(2, 1 + (g.level - 1) * 0.06));
+        }
       }
       g.pickupT -= dt;
       if (g.pickupT <= 0) { g.pickupT = rand(7, 11); spawnPickup(); }
@@ -932,7 +983,7 @@
       if (p.alive) {
         const rr = r.r * 0.85 + p.r * 0.8;
         if ((r.x - p.x) ** 2 + (r.y - p.y) ** 2 < rr * rr && p.inv <= 0) {
-          const dmg = r.kind === 'comet' ? 25 : r.kind === 'debris' ? 15 : [0, 12, 20, 32][r.size];
+          const dmg = Math.round((r.kind === 'comet' ? 25 : r.kind === 'debris' ? 15 : [0, 12, 20, 32][r.size]) * (1 + (game.level - 1) * 0.06));
           hurtPlayer(dmg);
           destroyRock(r, true);
         }
@@ -1277,6 +1328,9 @@
       ctx.fillStyle = '#ff4d6d';
       ctx.fillText('MISSILES ' + p.missiles, 12, by - 18 * U);
     }
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#d9c6ff';
+    ctx.fillText(tag, W - 12, by);
   }
 
   function drawBanner() {
@@ -1306,6 +1360,7 @@
     ctx.save();
     if (shake > 0) ctx.translate(rand(-shake, shake), rand(-shake, shake));
     drawBackground(t, g ? g.warp : 1);
+    drawShip(t);
     if (g) {
       for (const pk of pickups) drawPickup(pk, t);
       for (const r of rocks) drawRock(r);
@@ -1327,13 +1382,159 @@
     }
   }
 
+  // ---------------------------------------------------------------- DJ capybara fly-by
+  // Every so often a friendly ship cruises across the background. Its pilot is a capybara
+  // vibing to music on headphones under a glass dome, with LED lights cycling inside.
+  let ship = null, shipT = 9, notes = [];
+  function spawnShip() {
+    const dir = Math.random() < 0.5 ? 1 : -1, L = 74 * U;
+    ship = { dir, L, x: dir > 0 ? -L * 2 : W + L * 2, y: rand(H * 0.2, H * 0.55), vx: dir * rand(0.13, 0.18) * W, t: 0, noteT: 0 };
+    Snd.whoosh(dir > 0);
+  }
+  function updateShip(dt) {
+    shipT -= dt;
+    if (!ship && shipT <= 0) { spawnShip(); shipT = rand(20, 35); }
+    if (ship) {
+      ship.t += dt;
+      ship.x += ship.vx * dt;
+      ship.noteT -= dt;
+      if (ship.noteT <= 0) {
+        ship.noteT = rand(0.25, 0.5);
+        notes.push({
+          x: ship.x + ship.dir * ship.L * 0.15 + rand(-10, 10) * U, y: ship.y - ship.L * 0.7,
+          vx: -ship.vx * 0.3 + rand(-15, 15) * U, vy: -rand(30, 55) * U, life: 2,
+          ch: pick(['♪', '♫', '♬']), hue: randi(0, 360), ph: rand(0, TAU),
+        });
+      }
+      if (ship.x < -ship.L * 3 || ship.x > W + ship.L * 3) ship = null;
+    }
+    for (const n of notes) { n.x += n.vx * dt + Math.sin(time * 4 + n.ph) * 20 * U * dt; n.y += n.vy * dt; n.life -= dt; }
+    notes = notes.filter((n) => n.life > 0);
+  }
+
+  function drawDjCapy(x, y, s, t) {
+    const beat = Math.sin(t * 12.6);  // head-bob at ~120 bpm
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = '#a8683a';
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.75, s * 0.4, 0, 0, TAU); ctx.fill();   // shoulders
+    ctx.translate(0, -s * 0.12 + Math.abs(beat) * s * 0.06);
+    ctx.rotate(beat * 0.12);
+    ctx.fillStyle = '#b97a45';
+    roundRect(-s * 0.58, -s * 0.95, s * 1.16, s * 1.05, s * 0.45); ctx.fill();
+    ctx.fillStyle = '#6e3d1f';
+    ctx.beginPath(); ctx.arc(-s * 0.45, -s * 0.9, s * 0.14, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * 0.45, -s * 0.9, s * 0.14, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#8c5430';
+    roundRect(-s * 0.4, -s * 0.38, s * 0.8, s * 0.45, s * 0.2); ctx.fill();
+    ctx.fillStyle = '#2b140a';
+    ctx.beginPath(); ctx.ellipse(-s * 0.15, -s * 0.25, s * 0.06, s * 0.04, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(s * 0.15, -s * 0.25, s * 0.06, s * 0.04, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#120804';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(1.2, s * 0.07);
+    for (const side of [-1, 1]) {   // blissed-out closed eyes
+      ctx.beginPath(); ctx.arc(side * s * 0.28, -s * 0.54, s * 0.09, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    }
+    ctx.lineWidth = Math.max(1, s * 0.05);
+    ctx.beginPath(); ctx.arc(0, -s * 0.12, s * 0.1, 0.2, Math.PI - 0.2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,90,150,0.5)';
+    ctx.beginPath(); ctx.ellipse(-s * 0.42, -s * 0.36, s * 0.1, s * 0.06, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(s * 0.42, -s * 0.36, s * 0.1, s * 0.06, 0, 0, TAU); ctx.fill();
+    // headphones
+    ctx.strokeStyle = '#2a2a3a';
+    ctx.lineWidth = s * 0.12;
+    ctx.beginPath(); ctx.arc(0, -s * 0.5, s * 0.66, Math.PI * 1.08, Math.PI * 1.92); ctx.stroke();
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = '#ff3df2';
+      roundRect(side * s * 0.62 - s * 0.13, -s * 0.66, s * 0.26, s * 0.38, s * 0.1); ctx.fill();
+      ctx.globalCompositeOperation = 'lighter';
+      drawGlow(`hsl(${(t * 140 + (side > 0 ? 180 : 0)) % 360},100%,60%)`, side * s * 0.62, -s * 0.47, s * 0.16, 1);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.restore();
+  }
+
+  function drawShip(t) {
+    if (ship) {
+      const s = ship, L = s.L;
+      ctx.save();
+      ctx.translate(s.x, s.y + Math.sin(s.t * 2) * 6 * U);
+      ctx.scale(s.dir, 1);
+      ctx.rotate(Math.sin(s.t * 1.3) * 0.04);
+      // engine flame
+      ctx.globalCompositeOperation = 'lighter';
+      const fl = L * (0.7 + Math.random() * 0.35);
+      const fg = ctx.createLinearGradient(-L * 0.85, 0, -L * 0.85 - fl, 0);
+      fg.addColorStop(0, '#ffffff'); fg.addColorStop(0.3, '#3dfcff'); fg.addColorStop(0.7, '#8a5cff'); fg.addColorStop(1, 'rgba(138,92,255,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath(); ctx.moveTo(-L * 0.82, -L * 0.16); ctx.quadraticCurveTo(-L * 0.85 - fl * 1.2, 0, -L * 0.82, L * 0.16); ctx.fill();
+      drawGlow('#3dfcff', -L * 0.9, 0, L * 0.4, 0.9);
+      ctx.globalCompositeOperation = 'source-over';
+      // fins
+      ctx.fillStyle = '#ffe14d';
+      ctx.beginPath(); ctx.moveTo(-L * 0.45, -L * 0.22); ctx.lineTo(-L * 0.88, -L * 0.55); ctx.lineTo(-L * 0.75, -L * 0.15); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-L * 0.45, L * 0.22); ctx.lineTo(-L * 0.88, L * 0.55); ctx.lineTo(-L * 0.75, L * 0.15); ctx.fill();
+      // hull
+      const hg = ctx.createLinearGradient(0, -L * 0.35, 0, L * 0.35);
+      hg.addColorStop(0, '#ff9ae8'); hg.addColorStop(0.5, '#c44dff'); hg.addColorStop(1, '#4a1a8a');
+      ctx.fillStyle = hg;
+      ctx.beginPath();
+      ctx.moveTo(L, L * 0.02);
+      ctx.bezierCurveTo(L * 0.7, -L * 0.34, -L * 0.3, -L * 0.34, -L * 0.85, -L * 0.2);
+      ctx.lineTo(-L * 0.85, L * 0.2);
+      ctx.bezierCurveTo(-L * 0.3, L * 0.36, L * 0.7, L * 0.34, L, L * 0.02);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#3dfcff'; ctx.lineWidth = 2 * U; ctx.stroke();
+      const hueBase = (t * (opts.reduceFlash ? 30 : 110)) % 360;
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 5; i++) drawGlow(`hsl(${(hueBase + i * 72) % 360},100%,60%)`, -L * 0.5 + i * L * 0.28, L * 0.18, 6 * U, 0.9);
+      ctx.globalCompositeOperation = 'source-over';
+      // cockpit interior (clipped to the dome)
+      const cx = L * 0.15, cy = -L * 0.2, R = L * 0.42;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 0); ctx.closePath(); ctx.clip();
+      ctx.fillStyle = '#140a2a'; ctx.fillRect(cx - R, cy - R, R * 2, R);
+      ctx.fillStyle = `hsla(${hueBase},100%,60%,0.25)`; ctx.fillRect(cx - R, cy - R, R * 2, R);  // LED wash
+      drawDjCapy(cx, cy + R * 0.02, R * 0.66, s.t);
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 11; i++) {   // LED strip around the inside of the dome
+        const a = Math.PI + ((i + 0.5) / 11) * Math.PI;
+        drawGlow(`hsl(${(hueBase + i * 33) % 360},100%,60%)`, cx + Math.cos(a) * R * 0.9, cy + Math.sin(a) * R * 0.9, 5 * U, 1);
+      }
+      for (let i = 0; i < 7; i++) {    // blinking console LEDs
+        if (opts.reduceFlash || (Math.floor(t * 8) + i) % 3 !== 0) drawGlow(`hsl(${(hueBase + 180 + i * 50) % 360},100%,60%)`, cx - R * 0.8 + i * R * 0.27, cy - R * 0.06, 4 * U, 1);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.restore();
+      // clear glass dome
+      ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 0); ctx.closePath();
+      ctx.fillStyle = 'rgba(170,235,255,0.14)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(220,250,255,0.9)'; ctx.lineWidth = 2.5 * U; ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 3 * U; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.78, Math.PI * 1.15, Math.PI * 1.4); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `900 ${Math.round(18 * U)}px "Trebuchet MS", sans-serif`;
+    for (const n of notes) {
+      ctx.globalAlpha = clamp(n.life, 0, 1);
+      ctx.fillStyle = `hsl(${(n.hue + time * 60) % 360},100%,70%)`;
+      ctx.fillText(n.ch, n.x, n.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // ---------------------------------------------------------------- menu demo capy
   function menuTick(dt) {
     time += dt;
     updateBackground(dt, 1.5);
+    updateShip(dt);
   }
   function renderMenu(t) {
     drawBackground(t, 1.5);
+    drawShip(t);
     const fake = { x: W / 2 + Math.sin(t * 1.3) * W * 0.3, y: H - safeBottom - 60 * U + Math.sin(t * 2.1) * 8, r: 24 * U, tilt: Math.cos(t * 1.3) * 0.3, inv: 0, shieldOn: false };
     drawCapy(fake, t);
   }
@@ -1355,7 +1556,48 @@
   };
   function show(el, on) { el.classList.toggle('hidden', !on); }
 
+  const tagInput = $('tagInput');
+  tagInput.value = tag;
+  function setTag(v) { tag = cleanTag(v); tagInput.value = tag; store.set('tag', tag); }
+  tagInput.addEventListener('input', () => {
+    const c = cleanTag(tagInput.value);
+    if (c !== tagInput.value) tagInput.value = c;
+    tag = c;
+    store.set('tag', tag);
+  });
+  $('diceBtn').addEventListener('click', () => setTag(randomTag()));
+
+  function renderBoard(el, mine) {
+    const list = loadBoard();
+    el.textContent = '';
+    const h = document.createElement('h3');
+    h.textContent = 'TOP PILOTS ON THIS DEVICE';
+    el.appendChild(h);
+    if (!list.length) {
+      const e = document.createElement('p');
+      e.className = 'empty';
+      e.textContent = 'No flights yet. Be the first!';
+      el.appendChild(e);
+      return;
+    }
+    list.forEach((r, i) => {
+      if (i >= 5 && i !== mine) return;
+      const row = document.createElement('div');
+      row.className = 'row' + (i === mine ? ' me' : '');
+      [['rk', '#' + (i + 1)], ['tg', r.tag || '???'], ['sc', r.score.toLocaleString()]].forEach(([c, txt]) => {
+        const sp = document.createElement('span');
+        sp.className = c;
+        sp.textContent = txt;
+        row.appendChild(sp);
+      });
+      el.appendChild(row);
+    });
+  }
+  renderBoard($('boardMenu'), -1);
+
   function startGame() {
+    if (!tag) setTag(randomTag());
+    tagInput.blur();
     Snd.init();
     Snd.startMusic();
     newGame();
@@ -1371,6 +1613,11 @@
     const s = game.score;
     const isBest = s > best;
     if (isBest) { best = s; store.set('best', best); }
+    const rank = addScore({ tag, score: s, level: game.level });
+    $('overTag').textContent = tag;
+    $('rankLine').textContent = rank >= 0 ? '#' + (rank + 1) + ' ON THIS DEVICE' : '';
+    renderBoard($('boardOver'), rank);
+    renderBoard($('boardMenu'), -1);
     $('finalScore').textContent = s.toLocaleString();
     $('finalLevel').textContent = game.level;
     $('bestOver').textContent = best.toLocaleString();
@@ -1448,6 +1695,7 @@
   cvs.addEventListener('pointercancel', endDrag);
 
   window.addEventListener('keydown', (e) => {
+    if (e.target === tagInput) { if (e.key === 'Enter') tagInput.blur(); return; }
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (k === 'p' || k === 'Escape') { state === 'play' ? pauseGame() : resumeGame(); return; }
     if ((k === 'Enter' || k === ' ') && (state === 'menu' || state === 'over')) { startGame(); e.preventDefault(); return; }
@@ -1490,5 +1738,5 @@
   }
 
   // test hook (harmless in production)
-  window.__capyx = { get state() { return state; }, get game() { return game; }, get player() { return player; }, levelUp: () => levelUp(), hurt: (d) => hurtPlayer(d), snd: Snd, spawnPickup: (t) => spawnPickup(t, player.x, player.y - 60) };
+  window.__capyx = { get state() { return state; }, get game() { return game; }, get player() { return player; }, levelUp: () => levelUp(), hurt: (d) => hurtPlayer(d), snd: Snd, spawnShip: () => spawnShip(), get rocks() { return rocks; }, spawnPickup: (t) => spawnPickup(t, player.x, player.y - 60) };
 })();
