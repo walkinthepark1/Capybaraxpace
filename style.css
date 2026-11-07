@@ -7,7 +7,8 @@ html, body {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none; touch-action: none;
 }
-canvas { position: fixed; inset: 0; display: block; touch-action: none; }
+#game { position: fixed; inset: 0; display: block; touch-action: none; }
+.item canvas, #preview { display: block; }
 #safe {
   position: fixed; left: 0; top: 0; width: 0; height: 0; visibility: hidden;
   padding-top: env(safe-area-inset-top, 0px);
@@ -131,3 +132,36 @@ canvas { position: fixed; inset: 0; display: block; touch-action: none; }
 .pilot b { color: #fff; text-shadow: 0 0 10px #3dfcff; }
 .rank { color: #3dfcff; font-weight: 900; letter-spacing: 1px; }
 .rank:empty { display: none; }
+
+/* Capy Closet */
+.closet { gap: 10px; }
+.closet .sub { font-size: 34px; }
+#preview {
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 61, 242, .28), rgba(61, 252, 255, .08) 60%, transparent 71%);
+}
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.tab {
+  font: inherit; font-size: 12px; font-weight: 900; letter-spacing: 1px; padding: 8px 12px;
+  border-radius: 999px; border: 2px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .08);
+  color: #fff; cursor: pointer; touch-action: manipulation;
+}
+.tab.on { background: #ff3df2; border-color: #ff3df2; color: #1a0033; box-shadow: 0 0 12px rgba(255, 61, 242, .7); }
+.items { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.item {
+  font: inherit; display: grid; justify-items: center; gap: 4px; padding: 8px 4px; min-width: 0;
+  border-radius: 14px; border: 2px solid rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .06);
+  color: #fff; font-size: 12px; font-weight: 900; cursor: pointer; touch-action: manipulation;
+}
+.item span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item.sel { border-color: #3dfcff; background: rgba(61, 252, 255, .14); box-shadow: 0 0 14px rgba(61, 252, 255, .6); }
+.item.locked { color: #a99bd0; }
+.item.locked canvas { filter: grayscale(1) brightness(.45); }
+.lock-hint { min-height: 1.2em; text-align: center; color: #ffe14d; }
+.closet-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center; }
+.closet .big-btn { min-width: 0; font-size: 20px; padding: 14px 28px; }
+.unlock { color: #ffe14d; }
+.unlock:empty { display: none; }
+.tab:focus-visible, .item:focus-visible, .dice:focus-visible, .big-btn:focus-visible, .small-btn:focus-visible {
+  outline: 3px solid #ffe14d; outline-offset: 2px;
+}

@@ -34,6 +34,7 @@
       <p class="hint">No sign-up needed. Your tag is saved on this device.</p>
     </div>
     <button id="startBtn" class="big-btn">LAUNCH 🚀</button>
+    <button id="closetBtn" class="small-btn">👕 CUSTOMIZE CAPY</button>
     <p class="best">BEST: <b id="bestMenu">0</b></p>
     <div id="boardMenu" class="board"></div>
     <div class="how">
@@ -45,6 +46,21 @@
     <div class="toggles">
       <label><input type="checkbox" id="optSound" checked> Sound</label>
       <label><input type="checkbox" id="optFlash"> Reduce flashing</label>
+    </div>
+  </div>
+</section>
+
+<!-- Capy Closet -->
+<section id="closet" class="overlay hidden" aria-label="Customize your capybara">
+  <div class="panel closet">
+    <h2 class="sub">CAPY CLOSET</h2>
+    <canvas id="preview" aria-hidden="true"></canvas>
+    <div id="tabs" class="tabs"></div>
+    <div id="items" class="items"></div>
+    <p id="lockHint" class="hint lock-hint"></p>
+    <div class="closet-actions">
+      <button id="randomLook" class="small-btn" type="button">🎲 RANDOM</button>
+      <button id="closetDone" class="big-btn" type="button">LOOKS GOOD!</button>
     </div>
   </div>
 </section>
@@ -68,6 +84,7 @@
     <p class="score-line small">LEVEL <b id="finalLevel">1</b> · BEST <b id="bestOver">0</b></p>
     <p id="newBest" class="new-best hidden">★ NEW BEST ★</p>
     <p id="rankLine" class="rank"></p>
+    <p id="unlockLine" class="rank unlock"></p>
     <div id="boardOver" class="board"></div>
     <button id="retryBtn" class="big-btn">FLY AGAIN</button>
     <button id="menuBtn" class="small-btn">MAIN MENU</button>
