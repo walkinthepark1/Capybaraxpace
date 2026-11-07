@@ -355,7 +355,7 @@
         const t = ac.currentTime;
         const g = ac.createGain();
         g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(0.14, t + 0.08);
+        g.gain.exponentialRampToValueAtTime(0.08, t + 0.08);   // sits under the laser track
         const f = ac.createBiquadFilter();
         f.type = 'lowpass'; f.frequency.value = 1400; f.Q.value = 8;
         const lfo = ac.createOscillator(), lg = ac.createGain();
@@ -376,6 +376,8 @@
         const nodes = [o1, o2, o3, lfo, whine, vib];
         nodes.forEach((o) => o.start(t));
         this.beam = { g, pan, nodes };
+        this.setReggaeton(true);
+        this.airhorn();
         this.voice({ type: 'sawtooth', freq: 200, to: 2400, dur: 0.25, vol: 0.08, echo: 0.3 }); // charge-up zap
       }
       if (this.beam.pan) this.beam.pan.pan.setTargetAtTime(this.panX(x), ac.currentTime, 0.05);
@@ -384,6 +386,7 @@
       if (!this.beam || !this.ac) return;
       const t = this.ac.currentTime, b = this.beam;
       this.beam = null;
+      this.setReggaeton(false);
       b.g.gain.cancelScheduledValues(t);
       b.g.gain.setValueAtTime(Math.max(0.0001, b.g.gain.value), t);
       b.g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
@@ -458,6 +461,10 @@
         this.voice({ type: 'triangle', freq: a, to: b, dur: d, vol: 0.14, when: 0.5 + i * 0.34, echo: 0.2 }));
     },
 
+    lockon() {
+      if (!this.ok('lockon', 0.16)) return;            // targeting beeps
+      this.voice({ type: 'square', freq: 1760, dur: 0.06, vol: 0.04 });
+    },
     alarm() {
       if (!this.ok('alarm', 1)) return;                     // two-tone warning siren
       [0, 0.22, 0.44, 0.66].forEach((w, i) => this.voice({ type: 'square', freq: i % 2 ? 660 : 880, dur: 0.2, vol: 0.05, when: w, echo: 0.2 }));
@@ -507,9 +514,47 @@
       this.nextTime = this.ac.currentTime + 0.05;
       this.musicTimer = setInterval(() => this.schedule(), 25);
     },
-    stopMusic() { clearInterval(this.musicTimer); this.musicTimer = null; },
+    stopMusic() { clearInterval(this.musicTimer); this.musicTimer = null; this.reggaeton = false; },
+    // While the Mega Laser fires, the soundtrack switches to an original reggaeton groove.
+    setReggaeton(on) {
+      if (this.reggaeton === on || !this.ac) return;
+      this.reggaeton = on;
+      this.step = 0;                                   // restart on the downbeat
+      this.nextTime = this.ac.currentTime + 0.03;
+    },
+    airhorn() {
+      if (!this.ok('airhorn', 2)) return;             // DJ air horn: "bwaa bwaa bwaaaaa"
+      [[0, 0.14], [0.18, 0.14], [0.36, 0.5]].forEach(([w, d]) => {
+        [466, 470, 233].forEach((f) => this.voice({ type: 'sawtooth', freq: f, to: f * 0.97, dur: d, vol: 0.035, when: w, attack: 0.01, echo: 0.25 }));
+      });
+    },
+    dembow(i, bar, stepDur, delay) {
+      const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+      const roots = [45, 41, 48, 43];                  // Am  F  C  G
+      const thirds = [3, 4, 4, 4];
+      const root = roots[bar], tri = [0, thirds[bar], 7];
+      if (i % 4 === 0) this.tone(130, 0.16, 'sine', 0.2, 38, delay);                     // boom
+      if (i === 3 || i === 6 || i === 11 || i === 14) {                                   // the dembow "ch-ck"
+        this.noise(0.09, 0.12, 4500, delay);
+        this.tone(240, 0.05, 'triangle', 0.05, 160, delay);
+      }
+      if (i % 2 === 1) this.noise(0.02, 0.035, 9000, delay);                              // hats
+      if (i === 0 || i === 6 || i === 8 || i === 14) this.tone(mtof(root), stepDur * 2.5, 'sine', 0.14, 0, delay);   // sub bass
+      const riff = { 0: 2, 3: 1, 6: 0, 8: 1, 10: 2, 12: 1, 13: 2 };                       // plucky lead
+      if (riff[i] !== undefined) this.tone(mtof(root + 24 + tri[riff[i]]), stepDur * 0.8, 'square', 0.03, 0, delay);
+    },
     schedule() {
       if (!this.ac || !opts.sound) { if (this.ac) this.nextTime = this.ac.currentTime + 0.05; return; }
+      if (this.reggaeton) {
+        const stepDur = 60 / 96 / 4;                   // reggaeton sits around 96 bpm
+        while (this.nextTime < this.ac.currentTime + 0.12) {
+          const s = this.step % 64;
+          this.dembow(s % 16, (s / 16) | 0, stepDur, Math.max(0, this.nextTime - this.ac.currentTime));
+          this.nextTime += stepDur;
+          this.step++;
+        }
+        return;
+      }
       const bpm = 120 + Math.min(40, (game ? game.level - 1 : 0) * 4);
       const stepDur = 60 / bpm / 4;
       const roots = [45, 45, 41, 43]; // A, A, F, G (midi)
@@ -543,8 +588,8 @@
     rapid:   { label: 'R', color: '#ff8a3d', text: 'RAPID FIRE!' },
     spread:  { label: 'S', color: '#ff3df2', text: 'SPREAD GUN!' },
     laser:   { label: 'L', color: '#3dfcff', text: 'MEGA LASER!' },
-    missile: { label: 'M', color: '#ff4d6d', text: '+12 MISSILES!' },
-    health:  { label: '+', color: '#7dff6a', text: '+35 HEALTH' },
+    missile: { label: 'M', color: '#ff4d6d', text: '+8 MISSILES!' },
+    health:  { label: '+', color: '#7dff6a', text: '+25 HEALTH' },
     shield:  { label: '◆', color: '#4dc3ff', text: 'SHIELD FULL' },
     nova:    { label: '✸', color: '#ffffff', text: 'NOVA BOMB!!' },
   };
@@ -561,22 +606,22 @@
   let state = 'menu';
   let game = null;
   let player = null;
-  let bullets = [], rocks = [], pickups = [], particles = [], texts = [], rings = [];
+  let bullets = [], rocks = [], pickups = [], particles = [], texts = [], rings = [], strikes = [];
   let shake = 0, flash = 0, flashColor = '#fff', banner = null, deathTimer = 0;
   let time = 0;
 
   function newGame() {
     game = {
-      score: 0, level: 1, levelT: 0, spawnT: 0.5, pickupT: 6, combo: 1, comboT: 0,
-      warp: 1, warpT: 0, survivalAcc: 0, showerT: 0, showerSpawn: 0, showerDone: false, newGear: [],
+      score: 0, level: 1, levelT: 0, spawnT: 0.5, pickupT: 9, combo: 1, comboT: 0,
+      warp: 1, warpT: 0, survivalAcc: 0, showerT: 0, showerSpawn: 0, showerDone: false, newGear: [], strikeT: 9, hits: {},
     };
     player = {
       x: W / 2, y: H * 0.78, tx: W / 2, ty: H * 0.78, r: 22 * U, tilt: 0,
-      hp: 100, maxHp: 100, shield: 0, maxShield: 0, shieldDelay: 0, shieldOn: false,
+      hp: 100, maxHp: 100, calmT: 0, campT: 0, campX: W / 2, campY: H * 0.78, shield: 0, maxShield: 0, shieldDelay: 0, shieldOn: false,
       regen: 0, inv: 1.5, weapon: 'blaster', weaponT: 0, fireT: 0,
       missiles: 0, missileT: 0, podT: 0, pod: false, twin: false, laserOn: false, alive: true,
     };
-    bullets = []; rocks = []; pickups = []; particles = []; texts = []; rings = [];
+    bullets = []; rocks = []; pickups = []; particles = []; texts = []; rings = []; strikes = [];
     shake = 0; flash = 0; banner = null; deathTimer = 0;
   }
 
@@ -596,12 +641,15 @@
     const r = sizes[size] * U * rand(0.9, 1.1);
     const speedMul = Math.min(2.6, 1 + d * 0.12 + Math.max(0, d - 5) * 0.05);
     const hue = pick([280, 320, 20, 190, 45, 260]);
+    const sx = x !== undefined ? x : rand(r, W - r), sy = y !== undefined ? y : -r;
+    const svy = vy !== undefined ? vy : rand(0.13, 0.24) * H * speedMul * (size === 3 ? 0.8 : 1);
+    let svx = vx !== undefined ? vx : rand(-0.06, 0.06) * W * (1 + d * 0.15);
+    // from level 2 a growing share of fresh rocks is aimed at where the capybara is
+    if (vx === undefined && d >= 1 && player && Math.random() < Math.min(0.5, 0.05 + d * 0.05)) {
+      svx = clamp((player.x - sx) / Math.max(0.3, (player.y - sy) / svy), -0.35 * W, 0.35 * W);
+    }
     rocks.push({
-      kind: 'rock', size, r,
-      x: x !== undefined ? x : rand(r, W - r),
-      y: y !== undefined ? y : -r,
-      vx: vx !== undefined ? vx : rand(-0.06, 0.06) * W,
-      vy: vy !== undefined ? vy : rand(0.13, 0.24) * H * speedMul * (size === 3 ? 0.8 : 1),
+      kind: 'rock', size, r, x: sx, y: sy, vx: svx, vy: svy,
       rot: rand(0, TAU), vr: rand(-2, 2),
       hp: [0, 1, 3, 7][size] + Math.floor(d / 2) * size,
       pts: makeShape(randi(8, 12), 0.35),
@@ -634,12 +682,39 @@
     Snd.whoosh(fromLeft);
   }
 
+  // Rocks that fly in from the screen edges, where an upward-firing gun can't reach them.
+  function spawnSideRock() {
+    const left = Math.random() < 0.5, d = game.level - 1;
+    const r = 28 * U;
+    spawnRock(Math.random() < 0.6 ? 2 : 1, left ? -r : W + r, rand(H * 0.05, H * 0.55),
+      (left ? 1 : -1) * rand(0.14, 0.26) * W * (1 + d * 0.06), rand(0.05, 0.15) * H);
+  }
+  // Homing space mines: they drift toward the capybara and must be shot or outrun.
+  function spawnMine() {
+    const d = game.level - 1, r = 15 * U;
+    rocks.push({
+      kind: 'mine', size: 1, r, x: rand(r, W - r), y: -r, vx: 0, vy: H * 0.1,
+      rot: 0, vr: 2, hp: 3 + Math.floor(d / 3), hitT: 0, life: 11, color: '#ff2d55', speed: H * 0.11 * (1 + d * 0.05),
+    });
+  }
+  // Targeted strike: a reticle locks onto the capybara, then a meteor slams that spot.
+  function spawnStrike() {
+    const d = game.level - 1;
+    strikes.push({ x: player.x, y: player.y, t: 0, lock: Math.max(0.75, 1.3 - d * 0.04) });
+  }
+  function launchStrike(st) {
+    const d = game.level - 1, r = 20 * U, sx = clamp(st.x + rand(-0.15, 0.15) * W, r, W - r), sy = -r;
+    const vy = H * 1.6 * (1 + d * 0.03), tt = (st.y - sy) / vy;
+    rocks.push({ kind: 'strike', size: 2, r, x: sx, y: sy, vx: (st.x - sx) / tt, vy, rot: 0, vr: 0, hp: 5 + Math.floor(d / 2), hitT: 0, color: '#ff2d55' });
+    Snd.whoosh(sx < W / 2);
+  }
+
   function spawnPickup(type, x, y) {
     if (!type) {
       const pool = ['rapid', 'spread', 'laser', 'missile', 'missile', 'health'];
       if (player.shieldOn) pool.push('shield');
-      if (game.level >= 3) pool.push('nova');
-      if (player.hp < player.maxHp * 0.4) pool.push('health', 'health');
+      if (game.level >= 3 && Math.random() < 0.35) pool.push('nova');
+      if (player.hp < player.maxHp * 0.3) pool.push('health');
       type = pick(pool);
     }
     pickups.push({ type, x: x !== undefined ? x : rand(30 * U, W - 30 * U), y: y !== undefined ? y : -20, vy: H * 0.12, t: 0, r: 16 * U });
@@ -725,7 +800,7 @@
     // unlocked auto pod
     if (p.pod) {
       p.podT -= dt;
-      if (p.podT <= 0 && rocks.length) { p.podT = Math.max(0.9, 2.2 - (game.level - 4) * 0.15); fireMissile(true); }
+      if (p.podT <= 0 && rocks.length) { p.podT = Math.max(1.8, 3.4 - (game.level - 4) * 0.1); fireMissile(true); }
     }
   }
 
@@ -752,21 +827,23 @@
       }
     }
     if (noScore) return;
-    const base = r.kind === 'comet' ? 150 : r.kind === 'debris' ? 75 : [0, 60, 40, 25][r.size];
+    const base = r.kind === 'strike' ? 200 : r.kind === 'mine' ? 120 : r.kind === 'comet' ? 150 : r.kind === 'debris' ? 75 : [0, 60, 40, 25][r.size];
     game.combo = Math.min(8, game.combo + 0.25);
     game.comboT = 1.6;
     if (Math.floor(game.combo) > 1) Snd.combo(Math.floor(game.combo));
     const pts = Math.round(base * Math.floor(game.combo));
     game.score += pts;
     addText(r.x, r.y, '+' + pts, Math.floor(game.combo) > 1 ? '#ffe14d' : '#fff', 14 + Math.floor(game.combo) * 2);
-    const dropChance = r.kind === 'comet' ? 0.6 : 0.05 + r.size * 0.025;
+    const scarcity = Math.max(0.4, 1 - (game.level - 1) * 0.06);   // fewer drops as levels climb
+    const dropChance = (r.kind === 'comet' ? 0.35 : r.kind === 'strike' ? 0.5 : 0.03 + r.size * 0.015) * scarcity;
     if (Math.random() < dropChance) spawnPickup(null, r.x, r.y);
   }
 
   function hurtPlayer(dmg) {
     const p = player;
     if (p.inv > 0 || !p.alive) return;
-    p.shieldDelay = 2.5;
+    p.shieldDelay = 4;
+    p.calmT = 0;
     if (p.shield > 0) {
       const absorbed = Math.min(p.shield, dmg);
       p.shield -= absorbed;
@@ -777,7 +854,7 @@
       if (dmg <= 0) { p.inv = 0.4; buzz(20); return; }
     }
     p.hp -= dmg;
-    p.inv = 1.0;
+    p.inv = 0.75;
     game.combo = 1;
     shake = 14;
     doFlash('#ff2050', 0.45);
@@ -821,9 +898,9 @@
     addText(pk.x, pk.y - 20, def.text, def.color, 20);
     switch (pk.type) {
       case 'rapid': case 'spread': case 'laser':
-        p.weapon = pk.type; p.weaponT = 12; Snd.power(); break;
-      case 'missile': p.missiles += 12; break;
-      case 'health': p.hp = Math.min(p.maxHp, p.hp + 35); break;
+        p.weapon = pk.type; p.weaponT = 8; Snd.power(); break;
+      case 'missile': p.missiles += 8; break;
+      case 'health': p.hp = Math.min(p.maxHp, p.hp + 25); break;
       case 'shield': p.shield = p.maxShield; break;
       case 'nova': nova(); break;
     }
@@ -838,15 +915,15 @@
     g.warpT = 1.8;
     const lv = g.level;
     let unlock = UNLOCKS[lv];
-    if (lv === 2) { p.shieldOn = true; p.maxShield = 50; p.shield = 50; }
-    else if (lv === 3) { p.regen = 2; }
+    if (lv === 2) { p.shieldOn = true; p.maxShield = 35; p.shield = 35; }
+    else if (lv === 3) { p.regen = 0.75; }
     else if (lv === 4) { p.pod = true; p.podT = 0.5; }
     else if (lv === 5) { p.twin = true; }
-    else if (lv === 6) { p.maxShield = 100; p.shield = 100; }
-    else if (lv === 7) { p.regen = 4; }
-    else { p.maxHp += 20; unlock = 'MAX HEALTH +20'; }
-    p.hp = Math.min(p.maxHp, p.hp + 25);
-    if (p.shieldOn) p.shield = p.maxShield;
+    else if (lv === 6) { p.maxShield = 60; p.shield = 60; }
+    else if (lv === 7) { p.regen = 1.5; }
+    else if (lv % 2 === 0) { p.maxHp += 10; unlock = 'MAX HEALTH +10'; }
+    else unlock = 'DANGER RISING';
+    p.hp = Math.min(p.maxHp, p.hp + 15);
     showBanner('LEVEL ' + lv, unlock, pick(NEON));
     if (lv > maxLevel) {
       maxLevel = lv;
@@ -859,7 +936,7 @@
     doFlash(pick(NEON), 0.5);
     Snd.level();
     buzz([30, 30, 30]);
-    spawnPickup();
+    if (lv % 2 === 0) spawnPickup();
   }
 
   // ---------------------------------------------------------------- update
@@ -903,10 +980,12 @@
         p.weaponT -= dt;
         if (p.weaponT <= 0) { p.weapon = 'blaster'; addText(p.x, p.y - 40 * U, 'POWER DOWN', '#aaa', 14); }
       }
-      if (p.regen && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + p.regen * dt);
+      p.calmT += dt;
+      // regen only kicks in after 4s without taking a hit
+      if (p.regen && p.calmT > 4 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + p.regen * dt);
       if (p.shieldOn) {
         p.shieldDelay -= dt;
-        if (p.shieldDelay <= 0 && p.shield < p.maxShield) p.shield = Math.min(p.maxShield, p.shield + p.maxShield * 0.12 * dt);
+        if (p.shieldDelay <= 0 && p.shield < p.maxShield) p.shield = Math.min(p.maxShield, p.shield + p.maxShield * 0.06 * dt);
       }
       fireWeapon(dt);
 
@@ -930,6 +1009,19 @@
         else spawnRock(Math.random() < Math.min(0.5, 0.25 + d * 0.04) ? 3 : Math.random() < 0.5 ? 2 : 1);
         if (lv >= 3 && Math.random() < Math.min(0.5, d * 0.06)) spawnRock(Math.random() < 0.5 ? 2 : 1);
         if (lv >= 6 && Math.random() < Math.min(0.35, (d - 4) * 0.05)) spawnDebris();
+        if (lv >= 3 && Math.random() < Math.min(0.3, (d - 1) * 0.05)) spawnSideRock();
+        if (lv >= 4 && Math.random() < Math.min(0.14, 0.04 + (d - 3) * 0.015)) spawnMine();
+      }
+
+      // Anti-camping: staying in one spot draws a targeted strike, and from level 3
+      // strikes also arrive on a timer, faster each level.
+      if (Math.hypot(p.x - p.campX, p.y - p.campY) > 70 * U) { p.campX = p.x; p.campY = p.y; p.campT = 0; }
+      else p.campT += dt;
+      const campLimit = Math.max(2.2, 4.5 - g.level * 0.25);
+      if (p.campT > campLimit) { spawnStrike(); p.campT = -1.5; }
+      if (g.level >= 3) {
+        g.strikeT -= dt;
+        if (g.strikeT <= 0) { g.strikeT = Math.max(3.5, 11 - g.level * 0.7) * rand(0.8, 1.2); spawnStrike(); }
       }
       // meteor shower halfway through every level from 3 on, longer and denser each time
       if (g.level >= 3 && !g.showerDone && g.levelT >= LEVEL_TIME * 0.45) {
@@ -949,7 +1041,7 @@
         }
       }
       g.pickupT -= dt;
-      if (g.pickupT <= 0) { g.pickupT = rand(7, 11); spawnPickup(); }
+      if (g.pickupT <= 0) { g.pickupT = rand(11, 16) + g.level * 0.6; spawnPickup(); }
     } else {
       deathTimer -= dt;
       if (deathTimer <= 0 && state === 'play') gameOver();
@@ -1021,20 +1113,38 @@
       r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.vr * dt;
       r.hitT = Math.max(0, r.hitT - dt);
       if (r.kind === 'rock' && (r.x < r.r && r.vx < 0 || r.x > W - r.r && r.vx > 0)) r.vx *= -1;
-      if (r.kind === 'comet' && particles.length < MAX_PARTICLES) {
+      if (r.kind === 'mine') {
+        r.life -= dt;
+        if (r.life <= 0) { destroyRock(r, true); continue; }
+        if (p.alive) {
+          const dx = p.x - r.x, dy = p.y - r.y, dd = Math.hypot(dx, dy) || 1;
+          r.vx += (dx / dd * r.speed - r.vx) * Math.min(1, dt * 1.4);
+          r.vy += (dy / dd * r.speed - r.vy) * Math.min(1, dt * 1.4);
+        }
+      }
+      if ((r.kind === 'comet' || r.kind === 'strike') && particles.length < MAX_PARTICLES) {
         particles.push({ x: r.x, y: r.y, vx: -r.vx * 0.2 + rand(-20, 20), vy: -r.vy * 0.2 + rand(-20, 20), life: 0.5, max: 0.5, s: rand(4, 8) * U, color: pick([r.color, '#fff']) });
       }
       if (r.y - r.r > H + 20 || r.x < -r.r * 3 || r.x > W + r.r * 3) { r.dead = true; continue; }
       if (p.alive) {
         const rr = r.r * 0.85 + p.r * 0.8;
         if ((r.x - p.x) ** 2 + (r.y - p.y) ** 2 < rr * rr && p.inv <= 0) {
-          const dmg = Math.round((r.kind === 'comet' ? 25 : r.kind === 'debris' ? 15 : [0, 12, 20, 32][r.size]) * (1 + (game.level - 1) * 0.06));
+          const baseDmg = r.kind === 'strike' ? 30 : r.kind === 'comet' ? 25 : r.kind === 'mine' ? 22 : r.kind === 'debris' ? 15 : [0, 12, 20, 32][r.size];
+          const dmg = Math.round(baseDmg * (1 + (game.level - 1) * 0.1));
+          game.hits[r.kind === 'rock' ? 'rock' + r.size : r.kind] = (game.hits[r.kind === 'rock' ? 'rock' + r.size : r.kind] || 0) + 1;
           hurtPlayer(dmg);
           destroyRock(r, true);
         }
       }
     }
     rocks = rocks.filter((r) => !r.dead);
+
+    for (const st of strikes) {
+      st.t += dt;
+      if (p.alive && st.t < st.lock * 0.6) { st.x += (p.x - st.x) * Math.min(1, dt * 10); st.y += (p.y - st.y) * Math.min(1, dt * 10); Snd.lockon(); }
+      if (st.t >= st.lock) { st.done = true; if (p.alive) launchStrike(st); }
+    }
+    strikes = strikes.filter((st) => !st.done);
 
     // pickups (magnet pull when close)
     for (const pk of pickups) {
@@ -1043,7 +1153,7 @@
       pk.x += Math.sin(pk.t * 3) * 20 * U * dt;
       if (p.alive) {
         const dx = p.x - pk.x, dy = p.y - pk.y, d = Math.hypot(dx, dy);
-        if (d < 110 * U) { pk.x += dx / d * 300 * U * dt; pk.y += dy / d * 300 * U * dt; }
+        if (d < 55 * U) { pk.x += dx / d * 220 * U * dt; pk.y += dy / d * 220 * U * dt; }
         if (d < p.r + pk.r) { pk.dead = true; collect(pk); }
       }
       if (pk.y > H + 30) pk.dead = true;
@@ -1446,12 +1556,54 @@
       ctx.strokeStyle = r.color; ctx.lineWidth = 2 * U;
       ctx.strokeRect(-w, -h * 0.5, w * 2, h);
       if (Math.floor(time * 4) % 2 === 0) { ctx.globalCompositeOperation = 'lighter'; drawGlow('#ff4d6d', 0, 0, r.r * 0.8, 1); }
+    } else if (r.kind === 'mine') {
+      ctx.fillStyle = lit ? '#fff' : '#3a0d1f';
+      ctx.strokeStyle = '#ff2d55'; ctx.lineWidth = 2 * U;
+      for (let i = 0; i < 8; i++) {                     // spikes
+        const a = (i / 8) * TAU;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a) * r.r * 0.7, Math.sin(a) * r.r * 0.7); ctx.lineTo(Math.cos(a) * r.r * 1.35, Math.sin(a) * r.r * 1.35); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.arc(0, 0, r.r * 0.85, 0, TAU); ctx.fill(); ctx.stroke();
+      const fast = r.life < 3 ? 12 : 5;                 // blinks faster before it fizzles out
+      if (Math.floor(time * fast) % 2 === 0) { ctx.globalCompositeOperation = 'lighter'; drawGlow('#ff2d55', 0, 0, r.r * 1.1, 1); }
+    } else if (r.kind === 'strike') {
+      ctx.globalCompositeOperation = 'lighter';
+      drawGlow('#ff8a3d', 0, 0, r.r * 3.4, 1);
+      drawGlow('#ff2d55', 0, 0, r.r * 2.2, 1);
+      drawGlow('#ffffff', 0, 0, r.r * 1.2, 1);
     } else {
       ctx.globalCompositeOperation = 'lighter';
       drawGlow(r.color, 0, 0, r.r * 3, 1);
       drawGlow('#ffffff', 0, 0, r.r * 1.4, 1);
     }
     ctx.restore();
+  }
+
+  function drawStrikes(t) {
+    for (const st of strikes) {
+      const k = st.t / st.lock, locked = k >= 0.6, R = (34 - 14 * k) * U;
+      ctx.save();
+      ctx.globalAlpha = 0.25 + 0.2 * k;                 // warning lane from the top
+      ctx.fillStyle = '#ff2d55';
+      ctx.fillRect(st.x - 3 * U, 0, 6 * U, st.y);
+      ctx.globalAlpha = 1;
+      ctx.translate(st.x, st.y);
+      ctx.strokeStyle = locked ? '#ffffff' : '#ff2d55';
+      ctx.lineWidth = 3 * U;
+      ctx.rotate(t * (locked ? 9 : 3));
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, TAU); ctx.stroke();
+      for (let i = 0; i < 4; i++) {
+        ctx.rotate(Math.PI / 2);
+        ctx.beginPath(); ctx.moveTo(R * 0.55, 0); ctx.lineTo(R * 1.35, 0); ctx.stroke();
+      }
+      ctx.restore();
+      if (!locked || Math.floor(t * 12) % 2 === 0) {
+        ctx.font = `900 ${Math.round(14 * U)}px "Trebuchet MS", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillStyle = '#ff2d55';
+        ctx.fillText(locked ? 'INCOMING!' : 'LOCK-ON', st.x, st.y - R - 6 * U);
+      }
+    }
   }
 
   function drawPickup(pk, t) {
@@ -1646,6 +1798,7 @@
     drawShip(t);
     if (g) {
       for (const pk of pickups) drawPickup(pk, t);
+      drawStrikes(t);
       for (const r of rocks) drawRock(r);
       drawLaser(t);
       drawBullets();
@@ -2104,5 +2257,5 @@
   }
 
   // test hook (harmless in production)
-  window.__capyx = { get state() { return state; }, get game() { return game; }, get player() { return player; }, levelUp: () => levelUp(), hurt: (d) => hurtPlayer(d), snd: Snd, spawnShip: () => spawnShip(), get rocks() { return rocks; }, spawnPickup: (t) => spawnPickup(t, player.x, player.y - 60) };
+  window.__capyx = { get state() { return state; }, get game() { return game; }, get player() { return player; }, levelUp: () => levelUp(), hurt: (d) => hurtPlayer(d), snd: Snd, spawnShip: () => spawnShip(), get strikes() { return strikes; }, get rocks() { return rocks; }, spawnPickup: (t) => spawnPickup(t, player.x, player.y - 60) };
 })();
