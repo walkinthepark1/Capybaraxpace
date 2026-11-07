@@ -69,19 +69,32 @@
 
   // ---------------------------------------------------------------- glow sprites
   const glowCache = new Map();
+  const GLOW_CACHE_MAX = 600;
+  // Animated colors arrive as hsl() strings with a fractional hue that changes every frame.
+  // Cached by the raw string, each frame made brand-new sprites (~900/s), which ran phones
+  // out of graphics memory after a couple of minutes. Rounding the hue to 5° steps keeps
+  // the cache to a few hundred sprites at most.
+  function glowKey(color) {
+    if (!color.startsWith('hsl')) return color;
+    const i = color.indexOf('(') + 1, j = color.indexOf(',', i);
+    const h = (((Math.round(parseFloat(color.slice(i, j)) / 5) * 5) % 360) + 360) % 360;
+    return color.slice(0, i) + h + color.slice(j);
+  }
   function glow(color) {
-    let c = glowCache.get(color);
+    const key = glowKey(color);
+    let c = glowCache.get(key);
     if (c) return c;
+    if (glowCache.size >= GLOW_CACHE_MAX) glowCache.clear();   // safety net: never grow without bound
     c = document.createElement('canvas');
     c.width = c.height = 64;
     const g = c.getContext('2d');
     const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     grd.addColorStop(0, '#ffffff');
-    grd.addColorStop(0.2, color);
+    grd.addColorStop(0.2, key);
     grd.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = grd;
     g.fillRect(0, 0, 64, 64);
-    glowCache.set(color, c);
+    glowCache.set(key, c);
     return c;
   }
   function drawGlow(color, x, y, r, a = 1) {
