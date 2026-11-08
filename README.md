@@ -53,6 +53,14 @@ Chain kills to build a combo multiplier of up to x8.
 ## Gamertag & leaderboard
 Type a gamertag on the start screen, or tap 🎲 for a random one. No account or sign-up is needed. Your tag and a top-10 leaderboard are saved on your device.
 
+## Boss fights
+Every 5th level a boss shows up and the music goes dark and fast. The level clock pauses until it's beaten. Bosses alternate and get tougher each time:
+
+- **Rock Golem**: a magma-cracked asteroid with glowing eyes and orbiting boulders. It throws fans of rocks, hurls giant boulders at you, and calls down meteor showers.
+- **Alien Mothership**: a saucer with chasing rim lights. It fires plasma bursts and aimed volleys, chains lock-on strikes, and drops homing mines.
+
+Below half health a boss becomes **ENRAGED** and attacks faster. Beating one sets off a chain of explosions, gives a big score bonus, heals you a little, and drops health, a gun and missiles.
+
 ## Mega Laser soundtrack
 While the Mega Laser fires, the music switches to an original reggaeton track: a dembow beat, a sub bass, a plucky synth riff, and a DJ air horn.
 
